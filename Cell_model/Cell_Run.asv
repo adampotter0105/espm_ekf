@@ -1,0 +1,153 @@
+function[V_cell, T_core, T_surf, soc_bulk_n, soc_bulk_p, I_cell, param] = Cell_Run(x_initial,param);
+
+%% Generate matrices for solid phase, electrolyte phase, thermal, and aging
+
+% Solid phase discretization matrices
+[param.A_sd, param.B_sd_n, param.B_sd_p] = matrices_solidphase(param);
+
+% Electrolyte phase discretization matrices
+[param.A_en_d, param.A_es_d, param.A_ep_d, param.B_e_d] = matrices_elecphase(param);
+
+%% Separate compiled coefficient matrices (i.e. Define A1_en, A2_en, A3_en, etc.) 
+run separate_elec_matrices.m
+
+%% Solve ODEs 
+
+% TEST - USE GLOBAL VARIABLE FOR UPDATED I_CELL ESTIMATE
+global I_cell_prev
+I_cell_prev = param.I_data(1)/param.Nc*ones(param.Nc,1);
+
+tspan = param.t_data;
+
+reltol=5.0e-09; abstol=5.0e-09;
+event_formatted = @(t,x) physical_event_function(t,x,param); 
+options=odeset('RelTol',reltol,'AbsTol',abstol,'Events',event_formatted);
+[t_out, x_out,te,xe,ie] = ode15s(@(t_out, x_out) Cell_ode(t_out, x_out, param), tspan, x_initial, options);
+ie
+
+% t_stop = ones(param.cycles+1,1);
+% stop_index = zeros(param.cycles+1,1);
+% t_stop(1,:) = te;
+% stop_index(1,:) = ie;
+
+%Transpose state matrix into row form to match established data structure 
+x_out = real(x_out'); %Keep the result real
+ 
+
+if param.cycles == 0
+%For no additional cycles, output the relevant variables
+    param.t_data = t_out;
+    
+else
+%For any # of additional cycles > 0, continue cycling w/ alternating
+%charge/discharge profiles
+
+for i = 1:param.cycles
+    i
+      
+    x_in2 = x_out(:,end);
+    X_IN(:,i) = x_in2; 
+    param.I_data = - param.I_data;
+    event_formatted = @(t,x) physical_event_function(t,x,param); 
+    options=odeset('RelTol',reltol,'AbsTol',abstol,'Events',event_formatted);
+    [t_out2, x_out2,te2,xe2,ie2] = ode15s(@(t_out, x_out) Module_ode_MC_parallel(t_out, x_out, param), tspan, x_in2, options);
+    
+    % stop_index((i+1),:) = ie2
+    % t_stop((i+1),:) = te2
+    
+    %Transpose state matrix into row form to match established data structure 
+    x_out2 = real(x_out2');
+    %Shift t_out2 to account for duration of previous cycles
+    t_out2 = t_out2+t_out(end)+1;
+    
+    x_out = [x_out x_out2];
+    t_out = [t_out; t_out2];
+    I_dummy = [I_dummy; param.I_data(1:size(x_out2,2))];
+end
+
+%Pass concatenated time vector and current profiles to workspace in 'param'
+param.I_data = I_dummy;
+param.t_data = t_out;
+
+end
+%% Separate electrochemical, thermal & aging state variables from x_out matrix
+%Define solid concentrations
+cs = x_out(1:(param.Nr-1)*param.Nc*2,:);            %All solid concentrations
+cs_n = cs(1:(param.Nr-1)*param.Nc,:);               %Anode Concentrations
+cs_p = cs((param.Nr-1)*param.Nc+1:end,:);           %Cathode Concentrations
+
+index_cs = (param.Nr-1)*param.Nc*2;                 %Index for final solid concentration
+index_ce = index_cs + param.Nc*param.ce_states;     %Index for final electrolyte concentration
+
+%Define electrolyte concentrations
+ce = x_out(index_cs+1:index_ce,:);                  %All electrolyte concentrations
+ce_n = ce(1:param.Nx_n*param.Nc,:);                 %Negative Electrolyte Region
+ce_s = ce(param.Nx_n*param.Nc+1:(param.Nx_n + param.Nx_s)*param.Nc,:); %Separator Region
+ce_p = ce((param.Nx_n + param.Nx_s)*param.Nc+1:param.ce_states*param.Nc,:); %Positive Region
+
+%% Temperature dependent transport and kinetics for each cell
+
+for j = 1:length(cs(1,:))
+    I_cell(1,j) = param.I_data(j);  
+    T_core(1,j) = param.T_amb;
+    T_surf(1,j) = param.T_amb;
+    % Surface concentration -> surface stoichiometry
+    for i = 1:param.Nc
+        theta_surf_n(i,j) = cs_n(i*(param.Nr-1),j)/param.c_n_max;
+        theta_surf_p(i,j) = cs_p(i*(param.Nr-1),j)/param.c_p_max;
+    end
+    
+    % Temperature dependence
+    [Dsn(:,j), Dsp(:,j), kn(:,j), kp(:,j)] = arrhenius_temp(param, T_core(:,j));
+
+    
+    % Define electrolyte boundary concentrations for each cell
+    for i = 1:param.Nc
+        index1n = (i-1)*param.Nx_n+1;
+        index2n = i*param.Nx_n;
+        index1s = (i-1)*param.Nx_s+1;
+        index2s = i*param.Nx_s;
+        index1p = (i-1)*param.Nx_p+1;
+        index2p = i*param.Nx_p;
+      
+        %Average Electrolyte Concentrations for conc. dependent parameters
+        ce_n_avg(i,j) = mean(ce_n(index1n:index2n,j));
+        ce_s_avg(i,j) = mean(ce_s(index1s:index2s,j));
+        ce_p_avg(i,j) = mean(ce_p(index1p:index2p,j));
+        %ce_all(Row = 'Grid point', Column = 'Time point', 3rd Dimension = 'Cell #')
+        ce_all(:,j,i) = [ce_n(index1n:index2n,j); ce_s(index1s:index2s,j); ce_p(index1p:index2p,j)];
+        
+        %ce_all_avg(Row = 'Cell #', Column = 'Time point')
+        ce_all_avg(i,j) = mean(ce_all(:,j,i));
+        
+    end
+    eps_el_n = param.eps_el_n_ref;
+    % Electrolyte Conductivity
+    [K_el_eff_n(:,j),K_el_eff_s(:,j),K_el_eff_p(:,j)] = conductivity_update(ce_n_avg(:,j)...
+        ,ce_s_avg(:,j),ce_p_avg(:,j),eps_el_n,T_core(:,j),param);
+    
+    % Open circuit potential and overpotential
+    ocp_p(:,j) = U_p(theta_surf_p(:,j));
+    ocp_n(:,j) = U_n(theta_surf_n(:,j));
+    
+   
+    % NOTE TO SELF: replace all param.I_data with I_cell
+    % Using I_cell, update current-dependent electrochemical parameters
+    eta_p(:,j) = eta_cathode(theta_surf_p(:,j), ce_p_avg(:,j), T_core(:,j), I_cell(:,j), param, kp(:,j));
+    eta_n(:,j) = eta_anode(theta_surf_n(:,j), ce_n_avg(:,j), T_core(:,j), I_cell(:,j), param, kn(:,j));
+
+
+    % Cell voltages
+    [phi_e(:,j),R_el(:,j)] = electrolyte_potential(ce_all_avg(:,j), ce_all(:,j,:),K_el_eff_n(:,j),...
+        K_el_eff_s(:,j), K_el_eff_p(:,j),T_core(:,j), I_cell(:,j), param);
+    V_cell(:,j) = V_calculation(ocp_p(:,j),ocp_n(:,j),eta_p(:,j),eta_n(:,j),...
+        phi_e(:,j),I_cell(:,j),param);
+    V_oc = ocp_p - ocp_n;
+end
+
+
+%% Calculate SOC
+[soc_bulk_n,soc_bulk_p] = soc_calculation(cs_n,cs_p,param);
+
+end
+
