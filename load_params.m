@@ -1,5 +1,5 @@
 % Time to Simulate in EKF
-DT = 5; % Time step for the EKS, model will integrate over each of these steps
+DT = 1; % Time step for the EKS, model will integrate over each of these steps
 
 addpath('Cell_model')
 

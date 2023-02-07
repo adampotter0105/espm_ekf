@@ -1,7 +1,7 @@
 clear
 rng(2022);    % For repeatable results
 run load_params.m % Run the ECM Model and System Params Script
-simTime = 500; % seconds
+simTime = 100; % seconds
 tspan = 0:DT:simTime;
 numSteps = length(tspan);
 
@@ -14,9 +14,8 @@ param.I_data = target_C_rate*param.capacity*ones(length(param.t_data),1); % curr
 
 % Noise and Covariance Matrices
 % TODO: Find these numbers for real
-initialCovariance = diag(100*ones(1,n_states));
-processNoise = diag(10*ones(1,n_states)); % Process noise matrix
-measureNoise = 1e-4; % Measurement noise matrix (measurement is 1x1).
+processNoise = diag(100*ones(1,n_states)); % Process noise matrix
+measureNoise = 1.0006e-08; % Measurement noise matrix (measurement is 1x1).
 
 % Using EPSM Model as Truth
 trueStates = NaN(n_states,numSteps);
@@ -31,32 +30,42 @@ for i = 2:length(tspan)
     measurements(:,i) = li2voltage(trueStates(:,i)) + sqrt(measureNoise)*randn(1,1);
 end
 
+% Making Starting State wrong
+x0_error_factor = 0.05;
+x_initial_noisy = x_initial;
+x0_err = x_initial_noisy(1:param.Nr-1)*x0_error_factor; % Move a percentage of anode lithium to cathode 
+x_initial_noisy(1:param.Nr-1) = x_initial_noisy(1:param.Nr-1) - x0_err;
+x_initial_noisy(param.Nr:2*(param.Nr-1)) = x_initial_noisy(param.Nr:2*(param.Nr-1)) + x0_err*param.Rs_n/param.Rs_p; 
+
 % Create the EKF
-x0_error_factor = 0.9;
 fprintf("Creating EKF \n")
-x_initial_noisy = x_initial*x0_error_factor; % Make initial state estimate off
-% filter = trackingEKF(State=x_initial_noisy,StateCovariance=initialCovariance, ...
-%     StateTransitionFcn=@ESPMmodel,ProcessNoise=processNoise, ...
-%     MeasurementFcn=@li2voltage,MeasurementNoise=measureNoise);
-filter = trackingEKF(State=x_initial_noisy,StateTransitionFcn=@ESPMmodel,MeasurementFcn=@li2voltage);
+filter = trackingEKF(State=x_initial_noisy, StateTransitionFcn=@ESPMmodel,ProcessNoise=processNoise, ...
+    MeasurementFcn=@li2voltage,MeasurementNoise=measureNoise);
+% filter = trackingEKF(State=x_initial_noisy,StateTransitionFcn=@ESPMmodel,MeasurementFcn=@li2voltage);
 
 % Run the EKF
 estimateStates = NaN(size(trueStates)); % preallocate state estimates
 estimateStates(:,1) = filter.State;
 
+runtimes = zeros(1,length(tspan)-1);
 for i=2:length(tspan)
+    tic
     predict(filter,DT);
     estimateStates(:,i) = correct(filter,measurements(:,i));
-    fprintf("EKF step: %d \n",i)
+    runtimes(i) = toc;
+    fprintf("EKF step: %d \n",i-1)
 end
+fprintf("Average Runtime for EKF Step: %d seconds", mean(runtimes))
+
+%% Helper Functions
 
 % ESPM Model State Integrator
-function x_out = ESPMmodel(x_in, dt)  % param
+function x_out = ESPMmodel(x_in, ~)  % param
 global param
 tspan = param.t_data;
 
 %% Solve ODEs 
-reltol=5.0e-09; abstol=5.0e-09;
+reltol=5.0e-06; abstol=5.0e-06;
 event_formatted = @(t,x) physical_event_function(t,x,param); 
 options=odeset('RelTol',reltol,'AbsTol',abstol,'Events',event_formatted);
 [t_out, x_out,te,xe,ie] = ode15s(@(t_out, x_out) Cell_ode(t_out, x_out, param), tspan, x_in, options);
@@ -141,7 +150,7 @@ for j = 1:length(cs(1,:))
         K_el_eff_s(:,j), K_el_eff_p(:,j),T_core(:,j), I_cell(:,j), param);
     V_cell(:,j) = V_calculation(ocp_p(:,j),ocp_n(:,j),eta_p(:,j),eta_n(:,j),...
         phi_e(:,j),I_cell(:,j),param);
-    V_oc = ocp_p - ocp_n;
+    %V_oc = ocp_p - ocp_n;
 end
 
 

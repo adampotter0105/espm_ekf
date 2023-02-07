@@ -1,15 +1,16 @@
 %% Plot EKF Results
-li2voltage(estimateStates(:,1))
-li2voltage(trueStates(:,1))
+dV0 = li2voltage(estimateStates(:,1)) - li2voltage(trueStates(:,1))
 
 % Estimate Voltage using state estimates
 V_estimate(1,numSteps) = 0;
 V_real(1,numSteps) = 0;
-SOC_estimate(1,numSteps) = 0;
-SOC_real(1,numSteps) = 0;
+SOC_n_estimate(1,numSteps) = 0;
+SOC_p_estimate(1,numSteps) = 0;
+SOC_n_real(1,numSteps) = 0;
+SOC_p_real(1,numSteps) = 0;
 for i = 1:numSteps
-    [V_estimate(i), SOC_estimate(i)] = li2voltage(estimateStates(:,i));
-    [V_real(i), SOC_real(i)] = li2voltage(trueStates(:,i));
+    [V_estimate(i), SOC_n_estimate(i), SOC_p_estimate(i)] = li2voltage(estimateStates(:,i));
+    [V_real(i), SOC_n_real(i), SOC_p_real(i)] = li2voltage(trueStates(:,i));
 end
 
 figure(1)
@@ -24,7 +25,33 @@ ylabel("Voltage (V)")
 hold off
 improvePlot
 
-function [V_cell, soc_est] =li2voltage(x_out)
+figure(2)
+plot(tspan,SOC_n_estimate*1e2)
+hold on
+plot(tspan,SOC_p_estimate*1e2)
+plot(tspan,SOC_n_real*1e2)
+plot(tspan,SOC_p_real*1e2)
+legend(["EKF SOC Anode", "EKF SOC Cathode", "Real SOC Anode", "Real SOC Cathode"])
+xlabel("Time (s)")
+ylabel("SOC (%)")
+hold off
+improvePlot
+
+figure(3)
+yyaxis left
+plot(tspan,sum(estimateStates(1:param.Nr-1,:),1))
+hold on
+plot(tspan,sum(trueStates(1:param.Nr-1,:),1))
+yyaxis right
+plot(tspan,sum(estimateStates(param.Nr:2*(param.Nr-1),:),1))
+plot(tspan,sum(trueStates(param.Nr:2*(param.Nr-1),:),1))
+legend(["EKF Li Anode", "Real Li Anode", "EKF Li Cathode", "Real Li Cathode"])
+xlabel("Time (s)")
+ylabel("Li Concentration")
+hold off
+improvePlot
+
+function [V_cell, soc_n, soc_p] =li2voltage(x_out)
 global param
 %% Separate electrochemical, thermal & aging state variables from x_out matrix
 %Define solid concentrations
@@ -101,8 +128,8 @@ for j = 1:length(cs(1,:))
     V_oc = ocp_p - ocp_n;
 end
 
-
 %% Calculate SOC
-%[soc_bulk_n,soc_bulk_p] = soc_calculation(cs_n,cs_p,param);
-soc_est = 0; %(soc_bulk_n + soc_bulk_p)/2;
+[soc_bulk_n,soc_bulk_p] = soc_calculation(cs_n,cs_p,param);
+soc_n = mean(soc_bulk_n);
+soc_p = mean(soc_bulk_p);
 end
