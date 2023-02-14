@@ -1,37 +1,43 @@
 %% Plot EKF Results
-dV0 = li2voltage(estimateStates(:,1)) - li2voltage(trueStates(:,1))
+dV0 = li2voltage(estimateStates_ekf(:,1)) - li2voltage(trueStates(:,1))
 
 % Estimate Voltage using state estimates
-V_estimate(1,numSteps) = 0;
+V_estimate_ekf(1,numSteps) = 0;
+V_estimate_ukf(1,numSteps) = 0;
 V_real(1,numSteps) = 0;
-SOC_n_estimate(1,numSteps) = 0;
-SOC_p_estimate(1,numSteps) = 0;
+SOC_n_estimate_ekf(1,numSteps) = 0;
+SOC_p_estimate_ekf(1,numSteps) = 0;
+SOC_n_estimate_ukf(1,numSteps) = 0;
+SOC_p_estimate_ukf(1,numSteps) = 0;
 SOC_n_real(1,numSteps) = 0;
 SOC_p_real(1,numSteps) = 0;
 for i = 1:numSteps
-    [V_estimate(i), SOC_n_estimate(i), SOC_p_estimate(i)] = li2voltage(estimateStates(:,i));
+    [V_estimate_ekf(i), SOC_n_estimate_ekf(i), SOC_p_estimate_ekf(i)] = li2voltage(estimateStates_ekf(:,i));
+    [V_estimate_ukf(i), SOC_n_estimate_ukf(i), SOC_p_estimate_ukf(i)] = li2voltage(estimateStates_ukf(:,i));
     [V_real(i), SOC_n_real(i), SOC_p_real(i)] = li2voltage(trueStates(:,i));
 end
 
 figure(1)
-plot(tspan,V_estimate)
+plot(tspan,V_estimate_ekf)
 hold on
+plot(tspan,V_estimate_ukf)
 plot(tspan,V_real)
 plot(tspan,measurements)
-legend(["EKF Voltage", "Real Voltage","Measured Voltage"])
-ylim([3.5 4.5])
+legend(["EKF Voltage", "UKF Voltage", "Real Voltage","Measured Voltage"])
 xlabel("Time (s)")
 ylabel("Voltage (V)")
 hold off
 improvePlot
 
 figure(2)
-plot(tspan,SOC_n_estimate*1e2)
+plot(tspan,SOC_n_estimate_ekf*1e2, "b--")
 hold on
-plot(tspan,SOC_p_estimate*1e2)
-plot(tspan,SOC_n_real*1e2)
-plot(tspan,SOC_p_real*1e2)
-legend(["EKF SOC Anode", "EKF SOC Cathode", "Real SOC Anode", "Real SOC Cathode"])
+plot(tspan,SOC_p_estimate_ekf*1e2, "g--")
+plot(tspan,SOC_n_estimate_ukf*1e2, "b:")
+plot(tspan,SOC_p_estimate_ukf*1e2, "g:")
+plot(tspan,SOC_n_real*1e2, "b")
+plot(tspan,SOC_p_real*1e2, "g")
+legend(["EKF SOC Anode", "EKF SOC Cathode", "UKF SOC Anode", "UKF SOC Cathode","Real SOC Anode", "Real SOC Cathode"])
 xlabel("Time (s)")
 ylabel("SOC (%)")
 hold off
@@ -39,15 +45,18 @@ improvePlot
 
 figure(3)
 yyaxis left
-plot(tspan,sum(estimateStates(1:param.Nr-1,:),1))
+plot(tspan,mean(trueStates(1:param.Nr-1,:),1))
 hold on
-plot(tspan,sum(trueStates(1:param.Nr-1,:),1))
+plot(tspan,mean(estimateStates_ekf(1:param.Nr-1,:),1))
+plot(tspan,mean(estimateStates_ukf(1:param.Nr-1,:),1))
+ylabel("Anode Li Concentration")
 yyaxis right
-plot(tspan,sum(estimateStates(param.Nr:2*(param.Nr-1),:),1))
-plot(tspan,sum(trueStates(param.Nr:2*(param.Nr-1),:),1))
-legend(["EKF Li Anode", "Real Li Anode", "EKF Li Cathode", "Real Li Cathode"])
+plot(tspan,mean(trueStates(param.Nr:2*(param.Nr-1),:),1))
+plot(tspan,mean(estimateStates_ekf(param.Nr:2*(param.Nr-1),:),1))
+plot(tspan,mean(estimateStates_ukf(param.Nr:2*(param.Nr-1),:),1))
+legend(["Real Li Anode", "EKF Li Anode", "UKF Li Anode", "Real Li Cathode", "EKF Li Cathode", "UKF Li Cathode"])
 xlabel("Time (s)")
-ylabel("Li Concentration")
+ylabel("Cathode Li Concentration")
 hold off
 improvePlot
 

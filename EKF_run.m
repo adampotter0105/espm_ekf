@@ -1,7 +1,7 @@
 clear
 rng(2022);    % For repeatable results
 run load_params.m % Run the ECM Model and System Params Script
-simTime = 100; % seconds
+simTime = 30; % seconds
 tspan = 0:DT:simTime;
 numSteps = length(tspan);
 
@@ -31,31 +31,49 @@ for i = 2:length(tspan)
 end
 
 % Making Starting State wrong
-x0_error_factor = 0.05;
-x_initial_noisy = x_initial;
-x0_err = x_initial_noisy(1:param.Nr-1)*x0_error_factor; % Move a percentage of anode lithium to cathode 
-x_initial_noisy(1:param.Nr-1) = x_initial_noisy(1:param.Nr-1) - x0_err;
-x_initial_noisy(param.Nr:2*(param.Nr-1)) = x_initial_noisy(param.Nr:2*(param.Nr-1)) + x0_err*param.Rs_n/param.Rs_p; 
+x0_error_factor = -0.05; % percent error below real SOC
+[cs_initial_noisy, csn0_noisy, csp0_noisy] = conc_initial_sd((1-x0_error_factor)*param.SOC_ref, param); % careful, 0% soc reference concentrations also change
+x_initial_noisy = [cs_initial_noisy; ce_initial]; % assume same electrolyte
 
 % Create the EKF
 fprintf("Creating EKF \n")
-filter = trackingEKF(State=x_initial_noisy, StateTransitionFcn=@ESPMmodel,ProcessNoise=processNoise, ...
+ekf = trackingEKF(State=x_initial_noisy, StateTransitionFcn=@ESPMmodel,ProcessNoise=processNoise, ...
     MeasurementFcn=@li2voltage,MeasurementNoise=measureNoise);
-% filter = trackingEKF(State=x_initial_noisy,StateTransitionFcn=@ESPMmodel,MeasurementFcn=@li2voltage);
+
+% Create UKF
+fprintf("Creating UKF \n")
+ukf = unscentedKalmanFilter(@ESPMmodel,...
+    @li2voltage,x_initial_noisy);
+ukf.MeasurementNoise = measureNoise;
+ukf.ProcessNoise = processNoise;
 
 % Run the EKF
-estimateStates = NaN(size(trueStates)); % preallocate state estimates
-estimateStates(:,1) = filter.State;
+estimateStates_ekf = NaN(size(trueStates)); % preallocate state estimates
+estimateStates_ekf(:,1) = ekf.State;
+runtimes1 = zeros(1,length(tspan)-1);
 
-runtimes = zeros(1,length(tspan)-1);
 for i=2:length(tspan)
     tic
-    predict(filter,DT);
-    estimateStates(:,i) = correct(filter,measurements(:,i));
-    runtimes(i) = toc;
+    predict(ekf,DT);
+    estimateStates_ekf(:,i) = correct(ekf,measurements(:,i));
+    runtimes1(i) = toc;
     fprintf("EKF step: %d \n",i-1)
 end
-fprintf("Average Runtime for EKF Step: %d seconds", mean(runtimes))
+fprintf("EKF Average Runtime for EKF Step: %d seconds \n", mean(runtimes1))
+
+% Run UKF
+estimateStates_ukf = NaN(size(trueStates)); % preallocate state estimates
+estimateStates_ukf(:,1) = ukf.State;
+runtimes2 = zeros(1,length(tspan)-1);
+
+for i=2:length(tspan)
+    tic
+    predict(ukf,DT);
+    estimateStates_ukf(:,i) = correct(ukf,measurements(:,i));
+    runtimes2(i) = toc;
+    fprintf("UKF step: %d \n",i-1)
+end
+fprintf("UKF Average Runtime for EKF Step: %d seconds", mean(runtimes2))
 
 %% Helper Functions
 
