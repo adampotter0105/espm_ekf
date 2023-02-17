@@ -1,4 +1,4 @@
-function [value,isterminal,direction] = physical_event_function_v2(t,x,param)
+function [value,isterminal,direction] = physical_event_function(t,x,param)
 % when value is equal to zero, an event is triggered.
 % set isterminal to 1 to stop the solver at the first event, or 0 to
 % get all the events.
